@@ -1,0 +1,14 @@
+.DS_Store
+.godot/
+.import/
+*.import
+export.cfg
+export_presets.cfg
+*.pck
+*.zip
+spritefusion/generated/
+*.log
+tmp/
+temp/
+.vscode/
+.idea/
