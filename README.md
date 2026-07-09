@@ -1,6 +1,6 @@
 # Sprite Fusion for Godot
 
-Generate pixel-art sprites and animations from inside the Godot editor.
+[Sprite Fusion](https://www.spritefusion.com/pixel-art-generator) is a professional pixel-art sprites and animations generator. This is the native plugin for the Godot editor.
 
 ## Install
 
@@ -28,6 +28,8 @@ Generated assets are written to `res://spritefusion/generated`.
 
 - Website: https://www.spritefusion.com
 - Docs: https://www.spritefusion.com/docs/pixel-art-generator/integrations/godot
+
+<img src="./static/spritefusion-generator.webp" alt="Sprite Fusion Pixel Art Generator" style="width: 100%;">
 
 ## License
 
