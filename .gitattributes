@@ -1,0 +1,11 @@
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.tres text eol=lf
+*.tscn text eol=lf
+*.gd text eol=lf
+*.cfg text eol=lf
