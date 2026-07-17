@@ -298,7 +298,7 @@ func _is_connected() -> bool:
 
 func _start_device_flow() -> void:
 	_set_status("Creating connection code...")
-	if not _post_json("/api/integrations/auth/device/start", {}, Callable(self, "_on_device_start_completed")):
+	if not _post_json("/api/integrations/auth/device/start?integration=godot", {}, Callable(self, "_on_device_start_completed")):
 		_set_status("Unable to start connection.")
 
 
