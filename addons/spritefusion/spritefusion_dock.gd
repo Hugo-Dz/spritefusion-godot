@@ -11,6 +11,7 @@ const CONTENT_MIN_WIDTH := 220.0
 const JSON_REQUEST_TIMEOUT_SECONDS := 30.0
 const GENERATION_REQUEST_TIMEOUT_SECONDS := 600.0
 const DOWNLOAD_REQUEST_TIMEOUT_SECONDS := 120.0
+const GENERATION_SIZES := [64, 32, 16]
 
 var _session: Dictionary = {}
 var _asset_registry: Dictionary = {}
@@ -23,6 +24,7 @@ var _pending_user_code := ""
 var _poll_interval := 5
 var _after_refresh: Callable
 var _prompt_input: TextEdit
+var _size_input: OptionButton
 var _animation_prompt_input: TextEdit
 var _generate_button: Button
 var _image_asset_input: OptionButton
@@ -103,6 +105,9 @@ func _build_shell() -> void:
 func _render() -> void:
 	# Preserve user input across rebuilds.
 	var prompt_text := _prompt_input.text if is_instance_valid(_prompt_input) else ""
+	var selected_size := 64
+	if is_instance_valid(_size_input) and _size_input.selected >= 0:
+		selected_size = _size_input.get_selected_id()
 	var animation_prompt_text := _animation_prompt_input.text if is_instance_valid(_animation_prompt_input) else ""
 	var selected_asset_path := ""
 	if is_instance_valid(_image_asset_input) and not _image_asset_paths.is_empty():
@@ -114,7 +119,7 @@ func _render() -> void:
 	_add_status_area()
 
 	if _is_connected():
-		_render_connected(prompt_text, animation_prompt_text, selected_asset_path)
+		_render_connected(prompt_text, selected_size, animation_prompt_text, selected_asset_path)
 	elif _pending_device_code != "":
 		_render_connecting()
 	else:
@@ -175,7 +180,7 @@ func _render_connecting() -> void:
 	_content.add_child(cancel_button)
 
 
-func _render_connected(prompt_text := "", animation_prompt_text := "", selected_asset_path := "") -> void:
+func _render_connected(prompt_text := "", selected_size := 64, animation_prompt_text := "", selected_asset_path := "") -> void:
 	var email := Label.new()
 	email.custom_minimum_size = Vector2(CONTENT_MIN_WIDTH, 0)
 	email.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -191,6 +196,13 @@ func _render_connected(prompt_text := "", animation_prompt_text := "", selected_
 	_prompt_input.text = prompt_text
 	_content.add_child(_prompt_input)
 
+	_size_input = OptionButton.new()
+	for size in GENERATION_SIZES:
+		_size_input.add_item("%sx%s" % [size, size], size)
+	var selected_size_index := GENERATION_SIZES.find(selected_size)
+	_size_input.select(max(0, selected_size_index))
+	_content.add_child(_with_label("Size", _size_input))
+
 	_generate_button = Button.new()
 	_generate_button.text = "Generate"
 	_generate_button.pressed.connect(_handle_generate_pressed)
@@ -204,13 +216,15 @@ func _render_connected(prompt_text := "", animation_prompt_text := "", selected_
 		_image_asset_input.add_item("Generate an image first")
 		_image_asset_input.disabled = true
 	else:
-		for asset_path in _image_asset_paths:
+		for index in _image_asset_paths.size():
+			var asset_path: String = _image_asset_paths[index]
 			var asset_metadata: Dictionary = _asset_registry.get(asset_path, {})
 			var preview_texture := _load_texture(asset_path, 32)
+			var option_label := "%s - %02d" % [_format_asset_option(asset_metadata), index + 1]
 			if preview_texture:
-				_image_asset_input.add_icon_item(preview_texture, _format_asset_option(asset_path, asset_metadata))
+				_image_asset_input.add_icon_item(preview_texture, option_label)
 			else:
-				_image_asset_input.add_item(_format_asset_option(asset_path, asset_metadata))
+				_image_asset_input.add_item(option_label)
 		_image_asset_input.item_selected.connect(_handle_source_image_selected)
 
 		var restored_index := _image_asset_paths.find(selected_asset_path)
@@ -383,6 +397,7 @@ func _handle_generate_pressed() -> void:
 
 	var payload := {
 		"prompt": prompt,
+		"size": _size_input.get_selected_id(),
 	}
 
 	if _is_session_expiring():
@@ -479,13 +494,30 @@ func _on_generate_completed(
 		_set_generation_error_status(error_data, response_code)
 		return
 
-	var last_event := _consume_event_stream(body.get_string_from_utf8())
+	var events := _parse_event_stream(body.get_string_from_utf8())
+	var last_event: Dictionary = events[-1] if not events.is_empty() else {}
 	if last_event.get("type", "") != "succeeded":
 		_set_generate_button_loading(false)
 		_set_generation_error_status(last_event)
 		return
 
-	var assets: Array = last_event.get("assets", [])
+	var assets: Array = []
+	var asset_indexes_by_id := {}
+	for generation_event in events:
+		var event_assets = generation_event.get("assets", [])
+		if typeof(event_assets) != TYPE_ARRAY:
+			continue
+		for asset in event_assets:
+			if typeof(asset) != TYPE_DICTIONARY:
+				continue
+			var asset_id := str(asset.get("id", ""))
+			if asset_id == "":
+				continue
+			if asset_indexes_by_id.has(asset_id):
+				assets[asset_indexes_by_id[asset_id]] = asset
+			else:
+				asset_indexes_by_id[asset_id] = assets.size()
+				assets.append(asset)
 	if assets.is_empty():
 		_set_generate_button_loading(false)
 		_set_status("Generation returned no image.")
@@ -573,8 +605,8 @@ func _open_pricing() -> void:
 	OS.shell_open(API_BASE_URL + "/pixel-art-generator#pricing")
 
 
-func _consume_event_stream(stream_text: String) -> Dictionary:
-	var last_event: Dictionary = {}
+func _parse_event_stream(stream_text: String) -> Array:
+	var events := []
 	var normalized := stream_text.replace("\r\n", "\n")
 	for raw_event in normalized.split("\n\n", false):
 		var data_lines := []
@@ -588,9 +620,15 @@ func _consume_event_stream(stream_text: String) -> Dictionary:
 		if typeof(parsed) != TYPE_DICTIONARY:
 			continue
 
-		last_event = parsed
+		events.append(parsed)
 
-	return last_event
+	return events
+
+
+func _consume_event_stream(stream_text: String) -> Dictionary:
+	var events := _parse_event_stream(stream_text)
+
+	return events[-1] if not events.is_empty() else {}
 
 
 func _get_downloadable_image_assets(assets: Array) -> Array:
@@ -806,18 +844,12 @@ func _get_image_asset_paths() -> Array:
 	return paths
 
 
-func _format_asset_option(path: String, asset_metadata: Dictionary) -> String:
+func _format_asset_option(asset_metadata: Dictionary) -> String:
 	var prompt := str(asset_metadata.get("prompt", "Generated image")).strip_edges()
 	if prompt == "":
 		prompt = "Generated image"
 	if prompt.length() > 36:
 		prompt = prompt.substr(0, 33) + "..."
-
-	var width := int(asset_metadata.get("width", 0))
-	var height := int(asset_metadata.get("height", 0))
-	if width > 0 and height > 0:
-		return "%s (%sx%s)" % [prompt, width, height]
-
 	return prompt
 
 
