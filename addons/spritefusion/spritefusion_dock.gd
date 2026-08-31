@@ -69,7 +69,7 @@ func _process(_delta: float) -> void:
 
 	var fs := EditorInterface.get_resource_filesystem()
 	if fs.is_scanning():
-		set_process(true)  # retry next frame
+		set_process(true) # retry next frame
 		return
 
 	_scan_requested = false
@@ -337,7 +337,7 @@ func _poll_device_token() -> void:
 
 	if not _post_json(
 		"/api/integrations/auth/device/token",
-		{ "deviceCode": _pending_device_code },
+		{"deviceCode": _pending_device_code},
 		Callable(self, "_on_device_token_completed")
 	):
 		_set_status("Connection check failed. Retrying...")
@@ -396,6 +396,7 @@ func _handle_generate_pressed() -> void:
 		return
 
 	var payload := {
+		"operation": "generate",
 		"prompt": prompt,
 		"size": _size_input.get_selected_id(),
 	}
@@ -425,10 +426,10 @@ func _handle_animate_pressed() -> void:
 		return
 
 	var payload := {
+		"operation": "animate",
 		"prompt": prompt,
-		"imageDataUrl": image_data_url,
-		"sourceImageAssetId": source_asset.get("assetId", ""),
-		"outputFrames": 8,
+		"inputs": [ {"data_url": image_data_url}],
+		"output_frames": 8,
 		"colors": 24,
 	}
 
@@ -444,7 +445,7 @@ func _send_generate_request(payload: Dictionary, did_refresh: bool) -> void:
 	_set_generate_button_loading(true)
 	_set_status("")
 	var did_start_request := _post_bearer_json(
-		"/api/pixel-art-generator/image",
+		"/api/v1/generate",
 		payload,
 		_session.get("access_token", ""),
 		Callable(self, "_on_generate_completed"),
@@ -458,7 +459,7 @@ func _send_animation_request(payload: Dictionary, did_refresh: bool) -> void:
 	_set_animate_button_loading(true)
 	_set_status("")
 	var did_start_request := _post_bearer_json(
-		"/api/pixel-art-generator/animation",
+		"/api/v1/generate",
 		payload,
 		_session.get("access_token", ""),
 		Callable(self, "_on_animation_completed"),
@@ -496,7 +497,7 @@ func _on_generate_completed(
 
 	var events := _parse_event_stream(body.get_string_from_utf8())
 	var last_event: Dictionary = events[-1] if not events.is_empty() else {}
-	if last_event.get("type", "") != "succeeded":
+	if last_event.get("type", "") != "completed" or last_event.get("status", "") != "succeeded":
 		_set_generate_button_loading(false)
 		_set_generation_error_status(last_event)
 		return
@@ -504,20 +505,19 @@ func _on_generate_completed(
 	var assets: Array = []
 	var asset_indexes_by_id := {}
 	for generation_event in events:
-		var event_assets = generation_event.get("assets", [])
-		if typeof(event_assets) != TYPE_ARRAY:
+		if generation_event.get("type", "") != "output":
 			continue
-		for asset in event_assets:
-			if typeof(asset) != TYPE_DICTIONARY:
-				continue
-			var asset_id := str(asset.get("id", ""))
-			if asset_id == "":
-				continue
-			if asset_indexes_by_id.has(asset_id):
-				assets[asset_indexes_by_id[asset_id]] = asset
-			else:
-				asset_indexes_by_id[asset_id] = assets.size()
-				assets.append(asset)
+		var asset = generation_event.get("asset", {})
+		if typeof(asset) != TYPE_DICTIONARY:
+			continue
+		var asset_id := str(asset.get("id", ""))
+		if asset_id == "":
+			continue
+		if asset_indexes_by_id.has(asset_id):
+			assets[asset_indexes_by_id[asset_id]] = asset
+		else:
+			asset_indexes_by_id[asset_id] = assets.size()
+			assets.append(asset)
 	if assets.is_empty():
 		_set_generate_button_loading(false)
 		_set_status("Generation returned no image.")
@@ -558,20 +558,24 @@ func _on_animation_completed(
 		_set_generation_error_status(error_data, response_code)
 		return
 
-	var last_event := _consume_event_stream(body.get_string_from_utf8())
-	if last_event.get("type", "") != "success":
+	var events := _parse_event_stream(body.get_string_from_utf8())
+	var last_event: Dictionary = events[-1] if not events.is_empty() else {}
+	if last_event.get("type", "") != "completed" or last_event.get("status", "") != "succeeded":
 		_set_animate_button_loading(false)
 		_set_generation_error_status(last_event)
 		return
 
-	var asset: Dictionary = last_event.get("asset", {})
+	var asset: Dictionary = {}
+	for generation_event in events:
+		if generation_event.get("type", "") == "output" and typeof(generation_event.get("asset")) == TYPE_DICTIONARY:
+			asset = generation_event.get("asset")
 	var asset_id := str(asset.get("id", ""))
 	if asset_id == "":
 		_set_animate_button_loading(false)
 		_set_status("Animation returned no asset.")
 		return
 
-	_download_animation_spritesheet(asset, str(payload.get("prompt", "sprite-fusion")), false)
+	_download_animation_spritesheet(asset, str(payload.get("prompt", "sprite-fusion")))
 
 
 func _set_generation_error_status(error_data: Dictionary, response_code := 0) -> void:
@@ -586,19 +590,15 @@ func _needs_active_plan(error_data: Dictionary, response_code: int) -> bool:
 	if response_code != 402:
 		return false
 
-	var credits = error_data.get("credits", null)
-	if typeof(credits) == TYPE_DICTIONARY and str(credits.get("subscriptionPlan", "")) == "none":
-		return true
-
-	return str(error_data.get("error", "")) == "An active subscription is required."
+	var error = error_data.get("error", null)
+	return typeof(error) == TYPE_DICTIONARY and str(error.get("message", "")).begins_with("An active subscription is required.")
 
 
 func _format_generation_error(error_data: Dictionary) -> String:
-	var message := str(error_data.get("error", "Generation failed."))
-	var credits = error_data.get("credits", null)
-	if typeof(credits) == TYPE_DICTIONARY and credits.has("credits"):
-		return "%s Credits: %s." % [message, str(credits.get("credits", 0))]
-	return message
+	var error = error_data.get("error", null)
+	if typeof(error) == TYPE_DICTIONARY:
+		return str(error.get("message", "Generation failed."))
+	return "Generation failed."
 
 
 func _open_pricing() -> void:
@@ -623,12 +623,6 @@ func _parse_event_stream(stream_text: String) -> Array:
 		events.append(parsed)
 
 	return events
-
-
-func _consume_event_stream(stream_text: String) -> Dictionary:
-	var events := _parse_event_stream(stream_text)
-
-	return events[-1] if not events.is_empty() else {}
 
 
 func _get_downloadable_image_assets(assets: Array) -> Array:
@@ -699,10 +693,13 @@ func _on_image_asset_download_completed(
 	_download_next_image_asset(assets, prompt, index + 1, saved_paths)
 
 
-func _download_animation_spritesheet(asset: Dictionary, prompt: String, did_refresh: bool) -> void:
-	var asset_id := str(asset.get("id", ""))
-	var path := "%s/api/pixel-art-generator/assets/%s/file?file=spritesheet" % [API_BASE_URL, asset_id.uri_encode()]
-	if not _download_bearer_asset(path, _session.get("access_token", ""), Callable(self, "_on_animation_spritesheet_download_completed"), [asset, prompt, did_refresh]):
+func _download_animation_spritesheet(asset: Dictionary, prompt: String) -> void:
+	var spritesheet_url := str(asset.get("spritesheetUrl", ""))
+	if spritesheet_url == "":
+		_set_animate_button_loading(false)
+		_set_status("Animation returned no spritesheet URL.")
+		return
+	if not _download_asset(spritesheet_url, Callable(self, "_on_animation_spritesheet_download_completed"), [asset, prompt]):
 		_set_animate_button_loading(false)
 		_set_status("Unable to download animation spritesheet.")
 
@@ -714,14 +711,9 @@ func _on_animation_spritesheet_download_completed(
 	body: PackedByteArray,
 	asset: Dictionary,
 	prompt: String,
-	did_refresh: bool,
 	request: HTTPRequest
 ) -> void:
 	request.queue_free()
-	if response_code == 401 and not did_refresh and _session.get("refresh_token", "") != "":
-		_refresh_session(Callable(self, "_download_animation_spritesheet").bind(asset, prompt, true))
-		return
-
 	if result != HTTPRequest.RESULT_SUCCESS or response_code < 200 or response_code >= 300:
 		_set_animate_button_loading(false)
 		_set_status("Unable to download animation spritesheet.")
@@ -753,7 +745,7 @@ func _on_animation_spritesheet_download_completed(
 		_set_animate_button_loading(false)
 		_set_status("Unable to save spritesheet texture.")
 		return
-	texture.take_over_path(texture_path)  # .tres references it by path, not embedded
+	texture.take_over_path(texture_path) # .tres references it by path, not embedded
 
 	var sprite_frames_path := _get_sprite_frames_path(spritesheet_path)
 	if not _create_sprite_frames_resource(texture, sprite_frames_path, asset):
@@ -799,7 +791,7 @@ func _refresh_session(after_refresh: Callable) -> void:
 	_set_status("")
 	var did_start_request := _post_json(
 		"/api/integrations/auth/refresh",
-		{ "refresh_token": _session.get("refresh_token", "") },
+		{"refresh_token": _session.get("refresh_token", "")},
 		Callable(self, "_on_refresh_completed")
 	)
 	if not did_start_request:
@@ -1018,16 +1010,12 @@ func _post_json(path: String, payload: Dictionary, callback: Callable, extra_arg
 
 
 func _post_bearer_json(path: String, payload: Dictionary, bearer_token: String, callback: Callable, extra_args: Array = []) -> bool:
-	var headers := PackedStringArray(["Content-Type: application/json", "Accept: application/json", "Authorization: Bearer " + bearer_token])
+	var headers := PackedStringArray(["Content-Type: application/json", "Accept: text/event-stream", "Authorization: Bearer " + bearer_token])
 	return _post_json_request(API_BASE_URL + path, payload, headers, callback, extra_args, GENERATION_REQUEST_TIMEOUT_SECONDS)
 
 
 func _download_asset(url: String, callback: Callable, extra_args: Array = []) -> bool:
 	return _send_download_request(url, PackedStringArray(), callback, extra_args, DOWNLOAD_REQUEST_TIMEOUT_SECONDS)
-
-
-func _download_bearer_asset(url: String, bearer_token: String, callback: Callable, extra_args: Array = []) -> bool:
-	return _send_download_request(url, PackedStringArray(["Authorization: Bearer " + bearer_token]), callback, extra_args, DOWNLOAD_REQUEST_TIMEOUT_SECONDS)
 
 
 func _post_json_request(url: String, payload: Dictionary, headers: PackedStringArray, callback: Callable, extra_args: Array, timeout_seconds: float) -> bool:
