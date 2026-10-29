@@ -11,7 +11,7 @@ const CONTENT_MIN_WIDTH := 220.0
 const JSON_REQUEST_TIMEOUT_SECONDS := 30.0
 const GENERATION_REQUEST_TIMEOUT_SECONDS := 600.0
 const DOWNLOAD_REQUEST_TIMEOUT_SECONDS := 120.0
-const GENERATION_SIZES := [64, 32, 16]
+const GENERATION_SIZES := [128, 112, 96, 80, 64, 48, 32, 24, 16]
 
 var _session: Dictionary = {}
 var _asset_registry: Dictionary = {}
