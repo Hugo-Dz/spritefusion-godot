@@ -522,6 +522,11 @@ func _on_generate_completed(
 		_set_generate_button_loading(false)
 		_set_status("Generation returned no image.")
 		return
+	# In batch order: sprites stream as they are ready, and each image asset's batchIndex is its place in the batch.
+	var arrival := {}
+	for index in assets.size():
+		arrival[str(assets[index].get("id", ""))] = index
+	assets.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return _batch_place(a, arrival) < _batch_place(b, arrival))
 
 	var downloadable_assets := _get_downloadable_image_assets(assets)
 	if downloadable_assets.is_empty():
@@ -1051,6 +1056,13 @@ func _parse_json_body(body: PackedByteArray) -> Dictionary:
 	if typeof(parsed) != TYPE_DICTIONARY:
 		return {}
 	return parsed
+
+
+func _batch_place(asset: Dictionary, arrival: Dictionary) -> int:
+	var place = asset.get("batchIndex")
+	if typeof(place) == TYPE_INT or typeof(place) == TYPE_FLOAT:
+		return int(place)
+	return int(arrival.get(str(asset.get("id", "")), 0))
 
 
 func _get_output_path(prompt: String, extension := "png", suffix := "", index := -1) -> String:
