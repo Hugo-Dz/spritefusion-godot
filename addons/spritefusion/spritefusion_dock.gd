@@ -522,7 +522,7 @@ func _on_generate_completed(
 		_set_generate_button_loading(false)
 		_set_status("Generation returned no image.")
 		return
-	# In batch order: sprites stream as they are ready, and each image asset's batchIndex is its place in the batch.
+	# Keep the server's order (batchIndex), else arrival order.
 	var arrival := {}
 	for index in assets.size():
 		arrival[str(assets[index].get("id", ""))] = index
