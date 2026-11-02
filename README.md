@@ -31,7 +31,7 @@
 1. Click `Connect` in the Sprite Fusion dock.
 2. Approve the device code in your browser.
 3. Enter a prompt, choose a size from `16x16` to `128x128`, and click `Generate`.
-4. Sprite Fusion saves the 12 generated images (4 from `96x96` to `128x128`) to your project.
+4. Sprite Fusion saves the generated images to your project.
 5. Select a generated image, enter an animation prompt, and click `Animate`.
 
 Generated assets are written to `res://spritefusion/generated`.
